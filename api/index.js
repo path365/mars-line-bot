@@ -39,6 +39,11 @@ app.post('/api/webhook', line.middleware(lineConfig), async (req, res) => {
 });
 
 async function handleEvent(event) {
+  // Ignore LINE verification dummy tokens
+  if (event.replyToken === '00000000000000000000000000000000' || event.replyToken === 'ffffffffffffffffffffffffffffffff') {
+    return Promise.resolve(null);
+  }
+
   if (event.type !== 'message' || event.message.type !== 'text') {
     // Ignore non-text messages
     return Promise.resolve(null);
