@@ -25,8 +25,8 @@ const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 // Middleware to parse JSON
 app.use(express.json());
 
-// Webhook endpoint
-app.post('/api/webhook', line.middleware(lineConfig), async (req, res) => {
+// Webhook endpoint - Temporarily removed line.middleware() for debugging 500 errors
+app.post('/api/webhook', async (req, res) => {
   try {
     const events = req.body.events;
     // Process all events
