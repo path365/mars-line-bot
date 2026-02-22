@@ -22,8 +22,8 @@ const lineClient = new line.Client(lineConfig);
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-// Middleware to parse JSON
-app.use(express.json());
+// Middleware to parse JSON (Removed because line.middleware handles body parsing)
+// app.use(express.json());
 
 // Webhook endpoint
 app.post('/api/webhook', line.middleware(lineConfig), async (req, res) => {
