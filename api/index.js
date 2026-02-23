@@ -3,6 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const line = require('@line/bot-sdk');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { SUPERVISOR_PROMPT, buildAgentPrompt, buildSynthesizerPrompt, ACTIONS, buildFeatureListText, buildHelpText, AI_CHAT_GREETING } = require('../prompts');
 
 // Check for required environment variables
 if (!process.env.LINE_CHANNEL_ACCESS_TOKEN || !process.env.LINE_CHANNEL_SECRET || !process.env.GEMINI_API_KEY) {
@@ -62,6 +63,11 @@ async function handleEvent(event) {
     return Promise.resolve(null);
   }
 
+  // --- Handle Postback Events (Rich Menu) ---
+  if (event.type === 'postback') {
+    return handlePostback(event);
+  }
+
   if (event.type !== 'message' || event.message.type !== 'text') {
     // Ignore non-text messages
     return Promise.resolve(null);
@@ -71,11 +77,7 @@ async function handleEvent(event) {
     const userMessage = event.message.text;
 
     // --- Step 1: Supervisor Analysis ---
-    const supervisorPrompt = `你是一個統管 AI Agent 的 Supervisor。請分析使用者的要求，並將其拆解為多個獨立的子任務。判斷每個子任務需要哪種專業角色的 AI (例如: 翻譯員、程式設計師、搜尋專家)。
-請嚴格輸出 JSON 陣列，格式為: [{"role": "角色名稱", "instruction": "具體指令"}]。如果判定使用者的要求非常簡單，只需要單一對話即可完成，請輸出空陣列 []。
-不要輸出其他任何 Markdown 或文字解釋，只能輸出純 JSON。`;
-
-    const supervisorResult = await model.generateContent(`${supervisorPrompt}\n\n用戶訊息：${userMessage}`);
+    const supervisorResult = await model.generateContent(`${SUPERVISOR_PROMPT}\n\n用戶訊息：${userMessage}`);
     const supervisorResponseText = supervisorResult.response.text();
 
     let tasks = [];
@@ -100,7 +102,7 @@ async function handleEvent(event) {
     // --- Step 2: Sub-agent Execution ---
     console.log(`Supervisor assigned ${tasks.length} tasks:`, tasks);
     const agentPromises = tasks.map(async (task, index) => {
-      const agentPrompt = `你現在是 ${task.role}。請根據以下指令執行任務，並直接給出結果：\n${task.instruction}\n\n這是一開始使用者的原始訊息作為參考：${userMessage}`;
+      const agentPrompt = buildAgentPrompt(task.role, task.instruction, userMessage);
       try {
         const agentResult = await model.generateContent(agentPrompt);
         return `【${task.role} 的回報】:\n${agentResult.response.text()}`;
@@ -114,15 +116,7 @@ async function handleEvent(event) {
     const agentResultsCombined = agentResultsArray.join('\n\n');
 
     // --- Step 3: Synthesis ---
-    const synthesizerPrompt = `你是一個負責統整最終報告的 Synthesizer AI。
-這是一開始使用者的要求：\n"${userMessage}"
-
-以下是各個專業 AI Agent 完成的結果：
-${agentResultsCombined}
-
-請將這些結果綜整成一個連貫、自然且易讀的最終回覆給使用者。請直接給出回覆內容，不需提及你是由哪些 Agent 統整出來的。`;
-
-    const finalResult = await model.generateContent(synthesizerPrompt);
+    const finalResult = await model.generateContent(buildSynthesizerPrompt(userMessage, agentResultsCombined));
     const finalText = finalResult.response.text();
 
     // 回覆給使用者
@@ -136,6 +130,46 @@ ${agentResultsCombined}
     return lineClient.replyMessage(event.replyToken, {
       type: 'text',
       text: '對不起，我在處理任務時遇到了一點系統錯誤，請稍後再試。',
+    });
+  }
+}
+
+// --- Postback Handler (Rich Menu actions) ---
+async function handlePostback(event) {
+  const data = event.postback.data;
+
+  try {
+    switch (data) {
+      case ACTIONS.FEATURES:
+        return lineClient.replyMessage(event.replyToken, {
+          type: 'text',
+          text: buildFeatureListText(),
+        });
+
+      case ACTIONS.HELP:
+        return lineClient.replyMessage(event.replyToken, {
+          type: 'text',
+          text: buildHelpText(),
+        });
+
+      case ACTIONS.AI_CHAT:
+        return lineClient.replyMessage(event.replyToken, {
+          type: 'text',
+          text: AI_CHAT_GREETING,
+        });
+
+      default:
+        console.warn('Unknown postback action:', data);
+        return lineClient.replyMessage(event.replyToken, {
+          type: 'text',
+          text: '⚠️ 未知的操作，請使用底部選單的功能按鈕。',
+        });
+    }
+  } catch (err) {
+    console.error('Error handling postback:', err);
+    return lineClient.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '對不起，處理操作時遇到錯誤，請稍後再試。',
     });
   }
 }

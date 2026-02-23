@@ -5,7 +5,8 @@
   "main": "api/index.js",
   "scripts": {
     "start": "node api/index.js",
-    "dev": "vercel dev --yes"
+    "dev": "vercel dev --yes",
+    "setup:richmenu": "node scripts/setup-rich-menu.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
