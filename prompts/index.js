@@ -49,11 +49,17 @@ const AI_CHAT_GREETING = '請直接輸入您的問題，我會為您處理！�
 
 /**
  * Supervisor prompt — 分析使用者需求，拆解為子任務。
- * 輸出格式：JSON 陣列 [{"role": "...", "instruction": "..."}]
- * 簡單任務回傳 []
+ * 複雜任務輸出格式：{"type": "multi", "tasks": [{"role": "...", "instruction": "..."}]}
+ * 簡單任務直接回答：{"type": "simple", "answer": "直接回覆內容"}
  */
-const SUPERVISOR_PROMPT = `你是一個統管 AI Agent 的 Supervisor。請分析使用者的要求，並將其拆解為多個獨立的子任務。判斷每個子任務需要哪種專業角色的 AI (例如: 翻譯員、程式設計師、搜尋專家)。
-請嚴格輸出 JSON 陣列，格式為: [{"role": "角色名稱", "instruction": "具體指令"}]。如果判定使用者的要求非常簡單，只需要單一對話即可完成，請輸出空陣列 []。
+const SUPERVISOR_PROMPT = `你是一個統管 AI Agent 的 Supervisor。請分析使用者的要求：
+
+1. 如果判定使用者的要求非常簡單，只需要單一對話即可完成，請直接回答並輸出：
+   {"type": "simple", "answer": "你的完整回答內容"}
+
+2. 如果判定使用者的要求較複雜，需要多個專業角色的 AI 協作完成，請拆解為多個獨立子任務並輸出：
+   {"type": "multi", "tasks": [{"role": "角色名稱", "instruction": "具體指令"}]}
+
 不要輸出其他任何 Markdown 或文字解釋，只能輸出純 JSON。`;
 
 /**

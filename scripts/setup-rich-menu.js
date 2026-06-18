@@ -102,102 +102,40 @@ async function setDefaultRichMenu(richMenuId) {
   });
 }
 
-// ===== 簡易 Rich Menu 圖片產生 (純 PNG, 無外部依賴) =====
+// ===== Rich Menu 圖片產生 (使用 sharp + SVG) =====
 
 /**
- * 產生一個簡易 PNG 圖片 (2500x843)
- * 使用最小化 PNG 格式 — 三個色塊區域
- * 注意：這是一個簡易佔位圖，建議之後替換為設計過的圖片
+ * 產生 Rich Menu PNG 圖片 (2500x843)
+ * 三個色塊區域 + 白色文字標籤 + emoji 圖示
  */
-function generateSimpleRichMenuImage() {
+async function generateRichMenuImage() {
+  const sharp = require('sharp');
   const width = 2500;
   const height = 843;
-
-  // 三個區域的顏色 (RGB)
-  const colors = [
-    [41, 128, 185],   // 藍色 — AI 智能問答
-    [39, 174, 96],    // 綠色 — 功能列表
-    [142, 68, 173],   // 紫色 — 使用說明
-  ];
-
   const colWidth = Math.floor(width / 3);
 
-  // 建立原始像素資料 (RGBA)
-  const rawData = Buffer.alloc(width * height * 4);
+  const sections = [
+    { color: '#2980b9', icon: '🤖', label: 'AI 智能問答' },
+    { color: '#27ae60', icon: '📋', label: '功能列表' },
+    { color: '#8e44ad', icon: '❓', label: '使用說明' },
+  ];
 
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const colIndex = Math.min(Math.floor(x / colWidth), 2);
-      const [r, g, b] = colors[colIndex];
-      const offset = (y * width + x) * 4;
-      rawData[offset] = r;
-      rawData[offset + 1] = g;
-      rawData[offset + 2] = b;
-      rawData[offset + 3] = 255; // alpha
-    }
-  }
+  const svgParts = sections.map((s, i) => {
+    const x = i * colWidth;
+    const centerX = x + colWidth / 2;
+    const centerY = height / 2;
+    return `
+      <rect x="${x}" y="0" width="${colWidth + (i < 2 ? 1 : 0)}" height="${height}" fill="${s.color}"/>
+      <text x="${centerX}" y="${centerY - 40}" text-anchor="middle" font-size="120" fill="white">${s.icon}</text>
+      <text x="${centerX}" y="${centerY + 80}" text-anchor="middle" font-family="sans-serif" font-size="72" font-weight="bold" fill="white">${s.label}</text>
+    `;
+  });
 
-  // 建立未壓縮的 PNG
-  return createUncompressedPNG(width, height, rawData);
-}
+  const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+    ${svgParts.join('')}
+  </svg>`;
 
-/**
- * 建立最小化未壓縮 PNG (使用 zlib deflate)
- */
-function createUncompressedPNG(width, height, rawRGBA) {
-  const zlib = require('zlib');
-
-  // PNG signature
-  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-
-  // IHDR chunk
-  const ihdrData = Buffer.alloc(13);
-  ihdrData.writeUInt32BE(width, 0);
-  ihdrData.writeUInt32BE(height, 4);
-  ihdrData[8] = 8;  // bit depth
-  ihdrData[9] = 6;  // color type: RGBA
-  ihdrData[10] = 0; // compression
-  ihdrData[11] = 0; // filter
-  ihdrData[12] = 0; // interlace
-  const ihdr = createPNGChunk('IHDR', ihdrData);
-
-  // IDAT chunk — filter each row with filter type 0 (None)
-  const filteredRows = [];
-  for (let y = 0; y < height; y++) {
-    filteredRows.push(Buffer.from([0])); // filter type: None
-    const rowStart = y * width * 4;
-    filteredRows.push(rawRGBA.subarray(rowStart, rowStart + width * 4));
-  }
-  const rawImageData = Buffer.concat(filteredRows);
-  const compressed = zlib.deflateSync(rawImageData, { level: 1 });
-  const idat = createPNGChunk('IDAT', compressed);
-
-  // IEND chunk
-  const iend = createPNGChunk('IEND', Buffer.alloc(0));
-
-  return Buffer.concat([signature, ihdr, idat, iend]);
-}
-
-function createPNGChunk(type, data) {
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length, 0);
-  const typeBuffer = Buffer.from(type, 'ascii');
-  const crc32 = crc32Calc(Buffer.concat([typeBuffer, data]));
-  const crcBuffer = Buffer.alloc(4);
-  crcBuffer.writeUInt32BE(crc32 >>> 0, 0);
-  return Buffer.concat([length, typeBuffer, data, crcBuffer]);
-}
-
-// Simple CRC32 implementation for PNG chunks
-function crc32Calc(buf) {
-  let crc = 0xFFFFFFFF;
-  for (let i = 0; i < buf.length; i++) {
-    crc ^= buf[i];
-    for (let j = 0; j < 8; j++) {
-      crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
-    }
-  }
-  return (crc ^ 0xFFFFFFFF) >>> 0;
+  return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
 // ===== Main =====
@@ -225,10 +163,9 @@ async function main() {
 
   // Step 3: 產生並上傳圖片
   console.log('\n3. 產生並上傳 Rich Menu 圖片...');
-  const imageBuffer = generateSimpleRichMenuImage();
+  const imageBuffer = await generateRichMenuImage();
   await uploadRichMenuImage(richMenuId, imageBuffer);
-  console.log('   ✅ 圖片上傳成功 (2500x843, 三色佔位圖)');
-  console.log('   💡 提示：可替換為設計過的圖片，放在 assets/rich-menu.png');
+  console.log('   ✅ 圖片上傳成功 (2500x843, 含文字標籤)');
 
   // Step 4: 設為預設 Rich Menu
   console.log('\n4. 設為所有使用者的預設 Rich Menu...');

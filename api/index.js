@@ -2,7 +2,7 @@
 require('dotenv').config();
 const express = require('express');
 const line = require('@line/bot-sdk');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { generateContent } = require('../utils/gemini');
 const { SUPERVISOR_PROMPT, buildAgentPrompt, buildSynthesizerPrompt, ACTIONS, buildFeatureListText, buildHelpText, AI_CHAT_GREETING } = require('../prompts');
 
 // Check for required environment variables
@@ -20,8 +20,6 @@ const lineConfig = {
 // Initialize clients
 const app = express();
 const lineClient = new line.Client(lineConfig);
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
 // Middleware to parse JSON (Removed because line.middleware handles body parsing)
 // app.use(express.json());
@@ -77,26 +75,32 @@ async function handleEvent(event) {
     const userMessage = event.message.text;
 
     // --- Step 1: Supervisor Analysis ---
-    const supervisorResult = await model.generateContent(`${SUPERVISOR_PROMPT}\n\n用戶訊息：${userMessage}`);
+    const supervisorResult = await generateContent(`${SUPERVISOR_PROMPT}\n\n用戶訊息：${userMessage}`);
     const supervisorResponseText = supervisorResult.response.text();
 
-    let tasks = [];
+    let parsed = null;
     try {
       // 嘗試清理可能的 Markdown 標籤 (例如 ```json ... ```)
       const cleanJsonStr = supervisorResponseText.replace(/```json\n?|```/gi, '').trim();
-      tasks = JSON.parse(cleanJsonStr);
+      parsed = JSON.parse(cleanJsonStr);
     } catch (parseError) {
-      console.warn("Supervisor JSON parsing failed. Falling back to simple response.", parseError, "Response was:", supervisorResponseText);
-      // Fallback: 如果無法解析，退回空陣列
-      tasks = [];
+      console.warn("Supervisor JSON parsing failed. Using raw response.", parseError, "Response was:", supervisorResponseText);
+      // Fallback: 如果無法解析 JSON，直接把 Supervisor 的原始回應當作回覆
+      return lineClient.replyMessage(event.replyToken, { type: 'text', text: supervisorResponseText });
     }
 
-    // 如果沒有子任務 (或是解析失敗)，則使用傳統單一模式
+    // --- 簡單任務：Supervisor 直接回答 (1 次 API 呼叫) ---
+    if (parsed.type === 'simple' && parsed.answer) {
+      console.log("Supervisor answered directly (simple mode).");
+      return lineClient.replyMessage(event.replyToken, { type: 'text', text: parsed.answer });
+    }
+
+    // --- 複雜任務：取得子任務列表 ---
+    const tasks = parsed.tasks || [];
     if (!Array.isArray(tasks) || tasks.length === 0) {
-      console.log("Using simple fallback response mode.");
-      const result = await model.generateContent(userMessage);
-      const text = result.response.text();
-      return lineClient.replyMessage(event.replyToken, { type: 'text', text: text });
+      // 無法取得有效任務，用 Supervisor 原始回應
+      console.log("No valid tasks found. Returning raw supervisor response.");
+      return lineClient.replyMessage(event.replyToken, { type: 'text', text: supervisorResponseText });
     }
 
     // --- Step 2: Sub-agent Execution ---
@@ -104,7 +108,7 @@ async function handleEvent(event) {
     const agentPromises = tasks.map(async (task, index) => {
       const agentPrompt = buildAgentPrompt(task.role, task.instruction, userMessage);
       try {
-        const agentResult = await model.generateContent(agentPrompt);
+        const agentResult = await generateContent(agentPrompt);
         return `【${task.role} 的回報】:\n${agentResult.response.text()}`;
       } catch (err) {
         console.error(`Sub-agent ${task.role} failed:`, err);
@@ -116,7 +120,7 @@ async function handleEvent(event) {
     const agentResultsCombined = agentResultsArray.join('\n\n');
 
     // --- Step 3: Synthesis ---
-    const finalResult = await model.generateContent(buildSynthesizerPrompt(userMessage, agentResultsCombined));
+    const finalResult = await generateContent(buildSynthesizerPrompt(userMessage, agentResultsCombined));
     const finalText = finalResult.response.text();
 
     // 回覆給使用者

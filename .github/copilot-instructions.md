@@ -2,13 +2,14 @@
 
 ## Project Overview
 
-LINE Bot deployed on **Vercel** (serverless), using **Google Gemini 2.5 Flash** as the AI backend. The bot implements a **Supervisor → Sub-agents → Synthesizer** multi-agent pattern to handle complex user requests.
+LINE Bot deployed on **Vercel** (serverless), using **Google Gemini 3.5 Flash** as the AI backend (with automatic fallback to **Gemini 2.5 Flash**). The bot implements a **Supervisor → Sub-agents → Synthesizer** multi-agent pattern to handle complex user requests.
 
 ## Architecture
 
 ```
 api/index.js              ← Express app, webhook handler, Vercel entry point
 prompts/index.js          ← All prompt templates + feature definitions + Rich Menu actions
+utils/gemini.js           ← Gemini generateContent wrapper (retry + model fallback)
 scripts/setup-rich-menu.js ← Rich Menu 建立/圖片上傳/設為預設（本地執行）
 test-gemini.js            ← Local multi-agent pipeline test (no LINE needed)
 list-models.js            ← List available Gemini models
@@ -18,6 +19,7 @@ vercel.json               ← Vercel routing & build config
 - **Single entry point**: `api/index.js` — Express app exported (`module.exports = app`) as a Vercel serverless function.
 - **Routing**: All requests (`/.*`) are routed to `api/index.js` via `vercel.json`. The webhook listens on `POST /api/webhook`.
 - **Prompt & config centralization**: All prompt templates, feature definitions, and Rich Menu action constants live in `prompts/index.js`. When adding or modifying AI behavior, edit this file — **do NOT inline prompts in `api/index.js`**.
+- **Gemini calls go through `utils/gemini.js`**: Always call the exported `generateContent()` (interface-compatible with `model.generateContent()`) instead of instantiating the SDK directly. It adds retry on transient errors (429/500/503) and automatic fallback from the primary model (`gemini-3.5-flash`) to the older `gemini-2.5-flash`. Tune `PRIMARY_MODEL`, `FALLBACK_MODEL`, `MAX_RETRIES`, `RETRY_DELAY_MS` at the top of that file.
 - **No database** — stateless request/response; no conversation history is persisted (yet).
 
 ### Multi-Agent Flow (core logic in `handleEvent`)
@@ -39,7 +41,7 @@ Fallback: If Supervisor JSON parsing fails or returns empty, the bot sends the r
 - **Runtime**: Node.js (CommonJS `require` syntax, no ESM)
 - **Framework**: Express 4
 - **LINE SDK**: `@line/bot-sdk` v8 — uses `line.middleware()` for signature validation and body parsing (do NOT add `express.json()` middleware before it)
-- **AI**: `@google/generative-ai` (Gemini) — model: `gemini-2.5-flash`
+- **AI**: `@google/generative-ai` (Gemini) — primary model: `gemini-3.5-flash`, fallback: `gemini-2.5-flash` (handled in `utils/gemini.js`)
 - **Deployment**: Vercel with `@vercel/node`, max duration 60s
 
 ## Environment Variables (required)
